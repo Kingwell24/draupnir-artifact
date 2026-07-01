@@ -8,7 +8,7 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
 
-from .features import DEFAULT_FIELD_WEIGHTS, FIELD_ORDER
+from .features import FIELD_ORDER
 
 
 def l2_normalize_dense(x: np.ndarray) -> np.ndarray:
@@ -24,8 +24,8 @@ def combine_field_vectors(
     fields: Iterable[str] | None = None,
     truncate_dims: int | None = None,
 ) -> np.ndarray:
-    weights = weights or DEFAULT_FIELD_WEIGHTS
     fields = list(fields or FIELD_ORDER)
+    weights = weights or {field: 1.0 for field in fields if field != "negative"}
     combined: np.ndarray | None = None
     for field in fields:
         if field not in vectors_by_field:
@@ -44,9 +44,9 @@ def combine_field_vectors(
 
 
 def weighted_text(row: dict, field_weights: dict[str, float] | None = None) -> str:
-    field_weights = field_weights or DEFAULT_FIELD_WEIGHTS
     parts: list[str] = []
     texts = row.get("field_texts") or {}
+    field_weights = field_weights or {field: 1.0 for field in FIELD_ORDER if field != "negative"}
     for field in FIELD_ORDER:
         text = texts.get(field, "")
         weight = field_weights.get(field, 0.0)

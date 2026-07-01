@@ -21,21 +21,6 @@ FIELD_ORDER = [
     "negative",
 ]
 
-DEFAULT_FIELD_WEIGHTS = {
-    "primary_root": 3.0,
-    "must": 2.5,
-    "object": 2.2,
-    "invariant": 2.0,
-    "patch": 2.0,
-    "propagation": 1.2,
-    "should": 1.3,
-    "surface": 0.5,
-    "weak": 0.25,
-    "evidence": 0.8,
-    "negative": 0.0,
-}
-
-
 @dataclass
 class FeatureRow:
     record_id: str
@@ -198,7 +183,7 @@ def extract_features(record: CauseCardRecord) -> FeatureRow:
 
     clean_fields = {name: ordered_unique(fields.get(name, [])) for name in FIELD_ORDER}
     field_texts = {name: _format_field(name, clean_fields[name]) for name in FIELD_ORDER}
-    all_parts = [field_texts[name] for name in FIELD_ORDER if field_texts[name] and DEFAULT_FIELD_WEIGHTS[name] > 0]
+    all_parts = [field_texts[name] for name in FIELD_ORDER if field_texts[name] and name != "negative"]
     all_text = "\n\n".join(all_parts)
     stats = {
         "field_token_counts": {name: len(clean_fields[name]) for name in FIELD_ORDER},
