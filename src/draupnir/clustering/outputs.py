@@ -6,12 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from scipy import sparse
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.decomposition import TruncatedSVD
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import normalize
 
 from draupnir.clustering.metrics import pairwise_weighted_counts, weighted_purity_inverse_f
 from draupnir.clustering.normalize import canonical_token, ordered_unique, token_to_words
@@ -106,67 +102,6 @@ def final_row_from_base(base: dict[str, Any]) -> dict[str, Any]:
             "deduplication_rule": "typed object/invariant/propagation/patch tokens are removed from must/should when identical",
         },
     }
-
-
-def equal_field_text(row: dict[str, Any], fields: list[str] | None = None) -> str:
-    fields = fields or FINAL_FIELDS
-    texts = row.get("field_texts", {})
-    return "\n\n".join(texts.get(field, "") for field in fields if texts.get(field, ""))
-
-
-def tfidf_svd_vectors_equal_fields(
-    rows: list[dict[str, Any]],
-    analyzer: str = "word_char",
-    svd_dims: int = 256,
-    random_state: int = 13,
-    fields: list[str] | None = None,
-) -> tuple[np.ndarray, dict[str, Any]]:
-    fields = list(fields or FINAL_FIELDS)
-    texts = [equal_field_text(row, fields) for row in rows]
-    matrices = []
-    meta: dict[str, Any] = {
-        "analyzer": analyzer,
-        "svd_dims_requested": int(svd_dims),
-        "field_weights": {field: 1.0 for field in fields},
-        "fields": fields,
-    }
-
-    if analyzer in {"word", "word_char"}:
-        word_vec = TfidfVectorizer(
-            analyzer="word",
-            token_pattern=r"(?u)[A-Za-z0-9_.$:/()=+\-<>]+",
-            ngram_range=(1, 2),
-            min_df=1,
-            sublinear_tf=True,
-            norm="l2",
-        )
-        word_x = word_vec.fit_transform(texts)
-        matrices.append(word_x)
-        meta["word_vocab_size"] = len(word_vec.vocabulary_)
-
-    if analyzer in {"char", "word_char"}:
-        char_vec = TfidfVectorizer(
-            analyzer="char_wb",
-            ngram_range=(3, 5),
-            min_df=1,
-            sublinear_tf=True,
-            norm="l2",
-        )
-        char_x = char_vec.fit_transform(texts)
-        matrices.append(char_x)
-        meta["char_vocab_size"] = len(char_vec.vocabulary_)
-
-    if not matrices:
-        raise ValueError(f"Unsupported analyzer: {analyzer}")
-    x = sparse.hstack(matrices, format="csr") if len(matrices) > 1 else matrices[0]
-    max_dims = max(2, min(svd_dims, x.shape[0] - 1, x.shape[1] - 1))
-    svd = TruncatedSVD(n_components=max_dims, random_state=random_state)
-    dense = svd.fit_transform(x)
-    dense = normalize(dense, norm="l2").astype(np.float32)
-    meta["input_dim"] = int(x.shape[1])
-    meta["actual_svd_dims"] = int(max_dims)
-    meta["explained_variance_ratio_sum"] = float(svd.explained_variance_ratio_.sum())
-    return dense, meta
 
 
 def default_thresholds() -> list[float]:

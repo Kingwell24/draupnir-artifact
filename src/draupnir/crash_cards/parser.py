@@ -7,13 +7,11 @@ The public entry point for the artifact pipeline is
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
-import os
 import pathlib
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -972,117 +970,14 @@ def _guess_subsystems(frames: List[Frame]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Similarity (for layer-2 small bucket clustering)
-# ---------------------------------------------------------------------------
-def lcs_len(a: List[str], b: List[str]) -> int:
-    if not a or not b:
-        return 0
-    dp = [0] * (len(b) + 1)
-    for x in a:
-        ndp = dp[:]
-        for j, y in enumerate(b, 1):
-            if x == y:
-                ndp[j] = max(ndp[j], dp[j - 1] + 1)
-            else:
-                ndp[j] = max(ndp[j], ndp[j - 1])
-        dp = ndp
-    return dp[-1]
-
-
-def jaccard(a: Iterable[str], b: Iterable[str]) -> float:
-    sa, sb = set(a), set(b)
-    if not sa and not sb:
-        return 1.0
-    if not sa or not sb:
-        return 0.0
-    return len(sa & sb) / len(sa | sb)
-
-
-def similarity(c1: Dict[str, Any], c2: Dict[str, Any]) -> float:
-    b1, b2 = c1["bug"], c2["bug"]
-    f1 = c1["signature_fields"]["stack_funcs_top10"]
-    f2 = c2["signature_fields"]["stack_funcs_top10"]
-    p1, p2 = c1["fault"]["primary_function"], c2["fault"]["primary_function"]
-    paths1 = c1["signature_fields"]["stack_paths_top10"]
-    paths2 = c2["signature_fields"]["stack_paths_top10"]
-    aux1 = (
-        c1["signature_fields"]["alloc_funcs_top3"]
-        + c1["signature_fields"]["free_funcs_top3"]
-        + c1["signature_fields"]["origin_funcs_top3"]
-    )
-    aux2 = (
-        c2["signature_fields"]["alloc_funcs_top3"]
-        + c2["signature_fields"]["free_funcs_top3"]
-        + c2["signature_fields"]["origin_funcs_top3"]
-    )
-    lcs = lcs_len(f1, f2) / max(1, max(len(f1), len(f2)))
-    prefix = 1.0 if f1[:4] == f2[:4] and f1[:4] else 0.0
-    bug_exact = (
-        1.0
-        if (b1.get("sanitizer"), b1.get("bug_type"), b1.get("access"))
-        == (b2.get("sanitizer"), b2.get("bug_type"), b2.get("access"))
-        else 0.0
-    )
-    bug_family = 1.0 if b1.get("sanitizer") == b2.get("sanitizer") else 0.0
-    primary_match = 1.0 if p1 and p1 == p2 else 0.0
-    path_sim = jaccard(paths1, paths2)
-    aux_sim = jaccard(aux1, aux2) if (aux1 or aux2) else 0.5
-    return (
-        0.20 * bug_exact
-        + 0.05 * bug_family
-        + 0.20 * primary_match
-        + 0.30 * lcs
-        + 0.10 * prefix
-        + 0.10 * path_sim
-        + 0.05 * aux_sim
-    )
-
-
-# ---------------------------------------------------------------------------
 # Clustering helpers
 # ---------------------------------------------------------------------------
-class DSU:
-    def __init__(self, items: List[str]):
-        self.p = {x: x for x in items}
-
-    def find(self, x: str) -> str:
-        while self.p[x] != x:
-            self.p[x] = self.p[self.p[x]]
-            x = self.p[x]
-        return x
-
-    def union(self, a: str, b: str):
-        ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.p[rb] = ra
-
-
 def cluster_exact(cards: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     buckets: Dict[str, List[str]] = defaultdict(list)
     for c in cards:
         key = c["big_bucket"] + "::" + c["layer2_signature_hash"]
         buckets[key].append(c["case_id"])
     return dict(buckets)
-
-
-def cluster_fuzzy(cards: List[Dict[str, Any]], threshold: float) -> Dict[str, List[str]]:
-    out: Dict[str, List[str]] = {}
-    by_big: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for c in cards:
-        by_big[c["big_bucket"]].append(c)
-    for big, group in by_big.items():
-        ids = [c["case_id"] for c in group]
-        dsu = DSU(ids)
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                if similarity(group[i], group[j]) >= threshold:
-                    dsu.union(group[i]["case_id"], group[j]["case_id"])
-        tmp: Dict[str, List[str]] = defaultdict(list)
-        for cid in ids:
-            tmp[dsu.find(cid)].append(cid)
-        for root, members in tmp.items():
-            out[f"{big}::fuzzy{threshold:.2f}::{root}"] = sorted(members)
-    return out
 
 
 def build_cluster_summary(cards: List[Dict[str, Any]], clusters: Dict[str, List[str]]) -> List[Dict[str, Any]]:
@@ -1104,135 +999,3 @@ def build_cluster_summary(cards: List[Dict[str, Any]], clusters: Dict[str, List[
             },
         })
     return summaries
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Generate crash cards for Layer 2 of syzbot dedup pipeline."
-    )
-    ap.add_argument(
-        "--input", required=True,
-        help="Path to 6.8_fe46a7dd189e_bugs directory"
-    )
-    ap.add_argument(
-        "--out", default=None,
-        help="Optional: also collect all cards into a single output dir"
-    )
-    ap.add_argument(
-        "--single-bug", default=None,
-        help="Optional: process only a single bug directory name"
-    )
-    args = ap.parse_args()
-    base = pathlib.Path(args.input)
-
-    # --- Collect bug directories ---
-    if args.single_bug:
-        bug_dirs = [base / args.single_bug]
-    else:
-        bug_dirs = sorted([p for p in base.iterdir() if p.is_dir()])
-
-    all_cards: List[Dict[str, Any]] = []
-    total_crashes = 0
-    bugs_processed = 0
-
-    for bug_dir in bug_dirs:
-        crashes_dir = bug_dir / "crashes"
-        if not crashes_dir.is_dir():
-            continue
-
-        crash_folders = sorted([p for p in crashes_dir.iterdir() if p.is_dir()])
-        if not crash_folders:
-            continue
-
-        bug_name = bug_dir.name
-        crash_cards_dir = bug_dir / "crash_cards"
-        crash_cards_dir.mkdir(parents=True, exist_ok=True)
-
-        bug_cards: List[Dict[str, Any]] = []
-
-        for crash_folder in crash_folders:
-            if not (crash_folder / "crash_meta.json").exists():
-                continue
-            try:
-                card = make_card(crash_folder, bug_name)
-                bug_cards.append(card)
-                all_cards.append(card)
-
-                # Write individual crash card
-                out_path = crash_cards_dir / f"{card['case_id']}.json"
-                out_path.write_text(
-                    json.dumps(card, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            except Exception as exc:
-                print(f"  [ERROR] {crash_folder.name}: {exc}")
-
-        total_crashes += len(bug_cards)
-        bugs_processed += 1
-
-        # --- Per-bug cluster summary ---
-        if len(bug_cards) >= 2:
-            exact_clusters = cluster_exact(bug_cards)
-            summary = build_cluster_summary(bug_cards, exact_clusters)
-            (crash_cards_dir / "_cluster_summary.json").write_text(
-                json.dumps(summary, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            # Simple grouping sheet
-            lines = [
-                f"# Crash Clusters for {bug_name}",
-                f"Total crashes: {len(bug_cards)}",
-                f"Total clusters: {len(exact_clusters)}",
-                "",
-            ]
-            for i, (key, members) in enumerate(sorted(exact_clusters.items()), 1):
-                rep = bug_cards[0] if bug_cards else {}
-                for c in bug_cards:
-                    if c["case_id"] == members[0]:
-                        rep = c
-                        break
-                lines.append(
-                    f"## S{i:03d} (n={len(members)}) "
-                    f"primary={rep.get('fault', {}).get('primary_function', '?')} "
-                    f"sig={rep.get('layer2_signature_hash', '?')[:8]}"
-                )
-                for m in sorted(members):
-                    lines.append(f"  - {m}")
-                lines.append("")
-            (crash_cards_dir / "_cluster_summary.md").write_text(
-                "\n".join(lines), encoding="utf-8",
-            )
-
-        if bugs_processed % 20 == 0:
-            print(f"  ... processed {bugs_processed} bugs, {total_crashes} crashes so far")
-
-    print(f"\nDone: {bugs_processed} bugs, {total_crashes} crashes total")
-
-    # --- Optional: collect all cards into single output ---
-    if args.out:
-        outdir = pathlib.Path(args.out)
-        outdir.mkdir(parents=True, exist_ok=True)
-        (outdir / "all_crash_cards.jsonl").write_text(
-            "\n".join(json.dumps(c, ensure_ascii=False) for c in all_cards) + "\n",
-            encoding="utf-8",
-        )
-        (outdir / "all_crash_cards_pretty.json").write_text(
-            json.dumps(all_cards, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        print(f"Collected output written to {outdir}")
-
-    # Print summary statistics
-    bug_types = Counter(
-        (c["bug"].get("sanitizer"), c["bug"].get("bug_type")) for c in all_cards
-    )
-    print("\nBug type distribution:")
-    for (san, bt), cnt in bug_types.most_common():
-        print(f"  {san}:{bt} -> {cnt}")
-
-
-if __name__ == "__main__":
-    main()
