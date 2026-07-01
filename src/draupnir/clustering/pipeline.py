@@ -125,7 +125,7 @@ def embed_rows(rows: list[dict[str, Any]], args: argparse.Namespace, out_dir: Pa
         field: [cap(row.get("field_texts", {}).get(field, ""), args.max_chars_per_field) for row in rows]
         for field in FINAL_FIELDS
     }
-    api = load_openai_compatible_api(args.api_file or None)
+    api = load_openai_compatible_api(args.api_file or None, prefer_file=bool(args.api_file))
     service = EmbeddingService(api, model=args.model)
     cache = SQLiteEmbeddingCache(args.cache)
     combined: np.ndarray | None = None

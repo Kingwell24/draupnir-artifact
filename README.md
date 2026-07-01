@@ -75,16 +75,17 @@ python scripts\generate_crash_cards.py `
 
 Generate cause cards. Provide a local Linux source tree and an OpenAI-compatible
 chat endpoint. The source-search backend resolves file paths relative to the
-checkout supplied by `--linux-src`:
+checkout supplied by `--linux-src`. API credentials can be supplied through
+`OPENAI_API_KEY`/`OPENAI_BASE_URL`, a `.env` file, or an `--api-file` containing
+a `/v1` base URL and `Authorization: Bearer ...` token:
 
 ```powershell
-$env:OPENAI_API_KEY = "<your key>"
-$env:OPENAI_BASE_URL = "https://api.openai.com/v1"
 $env:OPENAI_MODEL = "<chat model>"
 
 python scripts\generate_cause_cards.py `
   --cards-file outputs\stage1_crash_cards\cards_to_process.txt `
   --linux-src external\linux `
+  --api-file path\to\api.txt `
   --out outputs\stage2_cause_cards
 ```
 
@@ -95,12 +96,13 @@ produced cause-card JSON files under `outputs\stage2_cause_cards`:
 python scripts\cluster_cause_cards.py `
   --cause-cards outputs\stage2_cause_cards `
   --representative-weights outputs\stage1_crash_cards\representative_weights.csv `
+  --api-file path\to\api.txt `
   --out outputs\stage3_clustering
 ```
 
-If `--cached-vectors` is omitted, Stage 3 uses `OPENAI_API_KEY` and optional
-`OPENAI_BASE_URL` to call the embedding model specified by `--model`; the
-default embedding model is `text-embedding-3-large`.
+If `--cached-vectors` is omitted, Stage 3 uses `--api-file` or
+`OPENAI_API_KEY`/`OPENAI_BASE_URL` to call the embedding model specified by
+`--model`; the default embedding model is `text-embedding-3-large`.
 
 ## Smoke Tests
 

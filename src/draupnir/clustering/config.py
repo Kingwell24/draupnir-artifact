@@ -12,11 +12,11 @@ class ApiConfig:
     api_key: str
 
 
-def load_openai_compatible_api(path: str | Path | None = None) -> ApiConfig:
+def load_openai_compatible_api(path: str | Path | None = None, *, prefer_file: bool = False) -> ApiConfig:
     """Load an OpenAI-compatible embedding endpoint without logging secrets."""
     env_key = os.environ.get("OPENAI_API_KEY", "")
     env_base = os.environ.get("OPENAI_BASE_URL", "")
-    if env_key:
+    if env_key and not prefer_file:
         return ApiConfig(
             base_url=(env_base or "https://api.openai.com/v1").rstrip("/"),
             api_key=env_key,

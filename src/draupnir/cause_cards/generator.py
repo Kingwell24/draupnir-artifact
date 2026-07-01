@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from draupnir.cause_cards import harness
+from draupnir.clustering.config import load_openai_compatible_api
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-file", default="src/draupnir/cause_cards/cause_card_prompt.md")
     parser.add_argument("--out", default="outputs/stage2_cause_cards")
     parser.add_argument("--env-file", default=".env", help="Optional KEY=VALUE file for OPENAI_API_KEY/OPENAI_BASE_URL/OPENAI_MODEL.")
+    parser.add_argument("--api-file", default="", help="Optional OpenAI-compatible curl/plain-text file containing a /v1 base URL and Bearer token.")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--parallelism", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.1)
@@ -106,8 +108,13 @@ def main() -> None:
     harness.LINUX_SRC = Path(args.linux_src)
     harness.PROMPT_FILE = Path(args.prompt_file)
     harness.load_env_file(Path(args.env_file))
-    harness.API_KEY = os.environ.get("OPENAI_API_KEY", harness.API_KEY)
-    harness.BASE_URL = os.environ.get("OPENAI_BASE_URL", harness.BASE_URL)
+    if args.api_file:
+        api = load_openai_compatible_api(args.api_file, prefer_file=True)
+        harness.API_KEY = api.api_key
+        harness.BASE_URL = api.base_url
+    else:
+        harness.API_KEY = os.environ.get("OPENAI_API_KEY", harness.API_KEY)
+        harness.BASE_URL = os.environ.get("OPENAI_BASE_URL", harness.BASE_URL)
     harness.MODEL = os.environ.get("OPENAI_MODEL", harness.MODEL)
 
     cards = read_cards(args)
